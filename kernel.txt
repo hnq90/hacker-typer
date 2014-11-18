@@ -1,531 +1,273 @@
-struct group_info init_groups = { .usage = ATOMIC_INIT(2) };
-
-struct group_info *groups_alloc(int gidsetsize){
-
-	struct group_info *group_info;
-
-	int nblocks;
-
-	int i;
+//  This is Jeff LaMarche's GLProgram OpenGL shader wrapper class from his OpenGL ES 2.0 book.
+//  A description of this can be found at his page on the topic:
+//  http://iphonedevelopment.blogspot.com/2010/11/opengl-es-20-for-ios-chapter-4.html
 
 
+#import "GLProgram.h"
+// START:typedefs
+#pragma mark Function Pointer Definitions
+typedef void (*GLInfoFunction)(GLuint program, 
+                               GLenum pname, 
+                               GLint* params);
+typedef void (*GLLogFunction) (GLuint program, 
+                               GLsizei bufsize, 
+                               GLsizei* length, 
+                               GLchar* infolog);
+// END:typedefs
+#pragma mark -
+#pragma mark Private Extension Method Declaration
+// START:extension
+@interface GLProgram()
 
-	nblocks = (gidsetsize + NGROUPS_PER_BLOCK - 1) / NGROUPS_PER_BLOCK;
+- (BOOL)compileShader:(GLuint *)shader 
+                 type:(GLenum)type 
+               string:(NSString *)shaderString;
+- (NSString *)logForOpenGLObject:(GLuint)object 
+                    infoCallback:(GLInfoFunction)infoFunc 
+                         logFunc:(GLLogFunction)logFunc;
+@end
+// END:extension
+#pragma mark -
 
-	/* Make sure we always allocate at least one indirect block pointer */
+@implementation GLProgram
+// START:init
 
-	nblocks = nblocks ? : 1;
+@synthesize initialized = _initialized;
 
-	group_info = kmalloc(sizeof(*group_info) + nblocks*sizeof(gid_t *), GFP_USER);
+- (id)initWithVertexShaderString:(NSString *)vShaderString 
+            fragmentShaderString:(NSString *)fShaderString;
+{
+    if ((self = [super init])) 
+    {
+        _initialized = NO;
+        
+        attributes = [[NSMutableArray alloc] init];
+        uniforms = [[NSMutableArray alloc] init];
+        program = glCreateProgram();
+        
+        if (![self compileShader:&vertShader 
+                            type:GL_VERTEX_SHADER 
+                          string:vShaderString])
+            NSLog(@"Failed to compile vertex shader");
+        
+        // Create and compile fragment shader
+        if (![self compileShader:&fragShader 
+                            type:GL_FRAGMENT_SHADER 
+                          string:fShaderString])
+            NSLog(@"Failed to compile fragment shader");
+        
+        glAttachShader(program, vertShader);
+        glAttachShader(program, fragShader);
+    }
+    
+    return self;
+}
 
-	if (!group_info)
+- (id)initWithVertexShaderString:(NSString *)vShaderString 
+          fragmentShaderFilename:(NSString *)fShaderFilename;
+{
+    NSString *fragShaderPathname = [[NSBundle mainBundle] pathForResource:fShaderFilename ofType:@"fsh"];
+    NSString *fragmentShaderString = [NSString stringWithContentsOfFile:fragShaderPathname encoding:NSUTF8StringEncoding error:nil];
+    
+    if ((self = [self initWithVertexShaderString:vShaderString fragmentShaderString:fragmentShaderString])) 
+    {
+    }
+    
+    return self;
+}
 
-		return NULL;
+- (id)initWithVertexShaderFilename:(NSString *)vShaderFilename 
+            fragmentShaderFilename:(NSString *)fShaderFilename;
+{
+    NSString *vertShaderPathname = [[NSBundle mainBundle] pathForResource:vShaderFilename ofType:@"vsh"];
+    NSString *vertexShaderString = [NSString stringWithContentsOfFile:vertShaderPathname encoding:NSUTF8StringEncoding error:nil];
 
-	group_info->ngroups = gidsetsize;
+    NSString *fragShaderPathname = [[NSBundle mainBundle] pathForResource:fShaderFilename ofType:@"fsh"];
+    NSString *fragmentShaderString = [NSString stringWithContentsOfFile:fragShaderPathname encoding:NSUTF8StringEncoding error:nil];
+    
+    if ((self = [self initWithVertexShaderString:vertexShaderString fragmentShaderString:fragmentShaderString])) 
+    {
+    }
+    
+    return self;
+}
+// END:init
+// START:compile
+- (BOOL)compileShader:(GLuint *)shader 
+                 type:(GLenum)type 
+               string:(NSString *)shaderString
+{
+//    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
 
-	group_info->nblocks = nblocks;
+    GLint status;
+    const GLchar *source;
+    
+    source = 
+      (GLchar *)[shaderString UTF8String];
+    if (!source)
+    {
+        NSLog(@"Failed to load vertex shader");
+        return NO;
+    }
+    
+    *shader = glCreateShader(type);
+    glShaderSource(*shader, 1, &source, NULL);
+    glCompileShader(*shader);
+    
+    glGetShaderiv(*shader, GL_COMPILE_STATUS, &status);
 
-	atomic_set(&group_info->usage, 1);
-
-
-
-	if (gidsetsize <= NGROUPS_SMALL)
-
-		group_info->blocks[0] = group_info->small_block;
-
-	else {
-
-		for (i = 0; i < nblocks; i++) {
-
-			gid_t *b;
-
-			b = (void *)__get_free_page(GFP_USER);
-
-			if (!b)
-
-				goto out_undo_partial_alloc;
-
-			group_info->blocks[i] = b;
-
+	if (status != GL_TRUE)
+	{
+		GLint logLength;
+		glGetShaderiv(*shader, GL_INFO_LOG_LENGTH, &logLength);
+		if (logLength > 0)
+		{
+			GLchar *log = (GLchar *)malloc(logLength);
+			glGetShaderInfoLog(*shader, logLength, &logLength, log);
+			NSLog(@"Shader compile log:\n%s", log);
+			free(log);
 		}
+	}	
+	
+//    CFAbsoluteTime linkTime = (CFAbsoluteTimeGetCurrent() - startTime);
+//    NSLog(@"Compiled in %f ms", linkTime * 1000.0);
 
-	}
-
-	return group_info;
-
-
-
-out_undo_partial_alloc:
-
-	while (--i >= 0) {
-
-		free_page((unsigned long)group_info->blocks[i]);
-
-	}
-
-	kfree(group_info);
-
-	return NULL;
-
+    return status == GL_TRUE;
 }
-
-
-
-EXPORT_SYMBOL(groups_alloc);
-
-
-
-void groups_free(struct group_info *group_info)
-
+// END:compile
+#pragma mark -
+// START:addattribute
+- (void)addAttribute:(NSString *)attributeName
 {
-
-	if (group_info->blocks[0] != group_info->small_block) {
-
-		int i;
-
-		for (i = 0; i < group_info->nblocks; i++)
-
-			free_page((unsigned long)group_info->blocks[i]);
-
-	}
-
-	kfree(group_info);
-
+    if (![attributes containsObject:attributeName])
+    {
+        [attributes addObject:attributeName];
+        glBindAttribLocation(program, 
+                             (GLuint)[attributes indexOfObject:attributeName],
+                             [attributeName UTF8String]);
+    }
 }
-
-
-
-EXPORT_SYMBOL(groups_free);
-
-
-
-/* export the group_info to a user-space array */
-
-static int groups_to_user(gid_t __user *grouplist,
-
-			  const struct group_info *group_info)
-
+// END:addattribute
+// START:indexmethods
+- (GLuint)attributeIndex:(NSString *)attributeName
 {
-
-	int i;
-
-	unsigned int count = group_info->ngroups;
-
-
-
-	for (i = 0; i < group_info->nblocks; i++) {
-
-		unsigned int cp_count = min(NGROUPS_PER_BLOCK, count);
-
-		unsigned int len = cp_count * sizeof(*grouplist);
-
-
-
-		if (copy_to_user(grouplist, group_info->blocks[i], len))
-
-			return -EFAULT;
-
-
-
-		grouplist += NGROUPS_PER_BLOCK;
-
-		count -= cp_count;
-
-	}
-
-	return 0;
-
+    return (GLuint)[attributes indexOfObject:attributeName];
 }
-
-
-
-/* fill a group_info from a user-space array - it must be allocated already */
-
-static int groups_from_user(struct group_info *group_info,
-
-    gid_t __user *grouplist)
-
+- (GLuint)uniformIndex:(NSString *)uniformName
 {
-
-	int i;
-
-	unsigned int count = group_info->ngroups;
-
-
-
-	for (i = 0; i < group_info->nblocks; i++) {
-
-		unsigned int cp_count = min(NGROUPS_PER_BLOCK, count);
-
-		unsigned int len = cp_count * sizeof(*grouplist);
-
-
-
-		if (copy_from_user(group_info->blocks[i], grouplist, len))
-
-			return -EFAULT;
-
-
-
-		grouplist += NGROUPS_PER_BLOCK;
-
-		count -= cp_count;
-
-	}
-
-	return 0;
-
+    return glGetUniformLocation(program, [uniformName UTF8String]);
 }
-
-
-
-/* a simple Shell sort */
-
-static void groups_sort(struct group_info *group_info)
-
+// END:indexmethods
+#pragma mark -
+// START:link
+- (BOOL)link
 {
+//    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
 
-	int base, max, stride;
+    GLint status;
+    
+    glLinkProgram(program);
+    
+    glGetProgramiv(program, GL_LINK_STATUS, &status);
+    if (status == GL_FALSE)
+        return NO;
+    
+    if (vertShader)
+    {
+        glDeleteShader(vertShader);
+        vertShader = 0;
+    }
+    if (fragShader)
+    {
+        glDeleteShader(fragShader);
+        fragShader = 0;
+    }
+    
+    self.initialized = YES;
 
-	int gidsetsize = group_info->ngroups;
+//    CFAbsoluteTime linkTime = (CFAbsoluteTimeGetCurrent() - startTime);
+//    NSLog(@"Linked in %f ms", linkTime * 1000.0);
 
-
-
-	for (stride = 1; stride < gidsetsize; stride = 3 * stride + 1)
-
-		; /* nothing */
-
-	stride /= 3;
-
-
-
-	while (stride) {
-
-		max = gidsetsize - stride;
-
-		for (base = 0; base < max; base++) {
-
-			int left = base;
-
-			int right = left + stride;
-
-			gid_t tmp = GROUP_AT(group_info, right);
-
-
-
-			while (left >= 0 && GROUP_AT(group_info, left) > tmp) {
-
-				GROUP_AT(group_info, right) =
-
-				    GROUP_AT(group_info, left);
-
-				right = left;
-
-				left -= stride;
-
-			}
-
-			GROUP_AT(group_info, right) = tmp;
-
-		}
-
-		stride /= 3;
-
-	}
-
+    return YES;
 }
-
-
-
-/* a simple bsearch */
-
-int groups_search(const struct group_info *group_info, gid_t grp)
-
+// END:link
+// START:use
+- (void)use
 {
-
-	unsigned int left, right;
-
-
-
-	if (!group_info)
-
-		return 0;
-
-
-
-	left = 0;
-
-	right = group_info->ngroups;
-
-	while (left < right) {
-
-		unsigned int mid = left + (right - left)/2;
-
-		if (grp > GROUP_AT(group_info, mid))
-
-			left = mid + 1;
-
-		else if (grp < GROUP_AT(group_info, mid))
-
-			right = mid;
-
-		else
-
-			return 1;
-
-	}
-
-	return 0;
-
+    glUseProgram(program);
 }
-
-
-
-/**
-
- * set_groups - Change a group subscription in a set of credentials
-
- * @new: The newly prepared set of credentials to alter
-
- * @group_info: The group list to install
-
- *
-
- * Validate a group subscription and, if valid, insert it into a set
-
- * of credentials.
-
- */
-
-int set_groups(struct cred *new, struct group_info *group_info)
-
+// END:use
+#pragma mark -
+// START:privatelog
+- (NSString *)logForOpenGLObject:(GLuint)object 
+                    infoCallback:(GLInfoFunction)infoFunc 
+                         logFunc:(GLLogFunction)logFunc
 {
-
-	put_group_info(new->group_info);
-
-	groups_sort(group_info);
-
-	get_group_info(group_info);
-
-	new->group_info = group_info;
-
-	return 0;
-
+    GLint logLength = 0, charsWritten = 0;
+    
+    infoFunc(object, GL_INFO_LOG_LENGTH, &logLength);    
+    if (logLength < 1)
+        return nil;
+    
+    char *logBytes = malloc(logLength);
+    logFunc(object, logLength, &charsWritten, logBytes);
+    NSString *log = [[NSString alloc] initWithBytes:logBytes 
+                                              length:logLength 
+                                            encoding:NSUTF8StringEncoding];
+    free(logBytes);
+    return log;
 }
-
-
-
-EXPORT_SYMBOL(set_groups);
-
-
-
-/**
-
- * set_current_groups - Change current's group subscription
-
- * @group_info: The group list to impose
-
- *
-
- * Validate a group subscription and, if valid, impose it upon current's task
-
- * security record.
-
- */
-
-int set_current_groups(struct group_info *group_info)
-
+// END:privatelog
+// START:log
+- (NSString *)vertexShaderLog
 {
-
-	struct cred *new;
-
-	int ret;
-
-
-
-	new = prepare_creds();
-
-	if (!new)
-
-		return -ENOMEM;
-
-
-
-	ret = set_groups(new, group_info);
-
-	if (ret < 0) {
-
-		abort_creds(new);
-
-		return ret;
-
-	}
-
-
-
-	return commit_creds(new);
-
+    return [self logForOpenGLObject:vertShader 
+                       infoCallback:(GLInfoFunction)&glGetProgramiv 
+                            logFunc:(GLLogFunction)&glGetProgramInfoLog];
+    
 }
-
-
-
-EXPORT_SYMBOL(set_current_groups);
-
-
-
-SYSCALL_DEFINE2(getgroups, int, gidsetsize, gid_t __user *, grouplist)
-
+- (NSString *)fragmentShaderLog
 {
-
-	const struct cred *cred = current_cred();
-
-	int i;
-
-
-
-	if (gidsetsize < 0)
-
-		return -EINVAL;
-
-
-
-	/* no need to grab task_lock here; it cannot change */
-
-	i = cred->group_info->ngroups;
-
-	if (gidsetsize) {
-
-		if (i > gidsetsize) {
-
-			i = -EINVAL;
-
-			goto out;
-
-		}
-
-		if (groups_to_user(grouplist, cred->group_info)) {
-
-			i = -EFAULT;
-
-			goto out;
-
-		}
-
-	}
-
-out:
-
-	return i;
-
+    return [self logForOpenGLObject:fragShader 
+                       infoCallback:(GLInfoFunction)&glGetProgramiv 
+                            logFunc:(GLLogFunction)&glGetProgramInfoLog];
 }
-
-
-
-/*
-
- *	SMP: Our groups are copy-on-write. We can set them safely
-
- *	without another task interfering.
-
- */
-
-
-
-SYSCALL_DEFINE2(setgroups, int, gidsetsize, gid_t __user *, grouplist)
-
+- (NSString *)programLog
 {
-
-	struct group_info *group_info;
-
-	int retval;
-
-
-
-	if (!nsown_capable(CAP_SETGID))
-
-		return -EPERM;
-
-	if ((unsigned)gidsetsize > NGROUPS_MAX)
-
-		return -EINVAL;
-
-
-
-	group_info = groups_alloc(gidsetsize);
-
-	if (!group_info)
-
-		return -ENOMEM;
-
-	retval = groups_from_user(group_info, grouplist);
-
-	if (retval) {
-
-		put_group_info(group_info);
-
-		return retval;
-
-	}
-
-
-
-	retval = set_current_groups(group_info);
-
-	put_group_info(group_info);
-
-
-
-	return retval;
-
+    return [self logForOpenGLObject:program 
+                       infoCallback:(GLInfoFunction)&glGetProgramiv 
+                            logFunc:(GLLogFunction)&glGetProgramInfoLog];
 }
+// END:log
 
-
-
-/*
-
- * Check whether we're fsgid/egid or in the supplemental group..
-
- */
-
-int in_group_p(gid_t grp)
-
+- (void)validate;
 {
-
-	const struct cred *cred = current_cred();
-
-	int retval = 1;
-
-
-
-	if (grp != cred->fsgid)
-
-		retval = groups_search(cred->group_info, grp);
-
-	return retval;
-
+	GLint logLength;
+	
+	glValidateProgram(program);
+	glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLength);
+	if (logLength > 0)
+	{
+		GLchar *log = (GLchar *)malloc(logLength);
+		glGetProgramInfoLog(program, logLength, &logLength, log);
+		NSLog(@"Program validate log:\n%s", log);
+		free(log);
+	}	
 }
 
-
-
-EXPORT_SYMBOL(in_group_p);
-
-
-
-int in_egroup_p(gid_t grp)
-
+#pragma mark -
+// START:dealloc
+- (void)dealloc
 {
-
-	const struct cred *cred = current_cred();
-
-	int retval = 1;
-
-
-
-	if (grp != cred->egid)
-
-		retval = groups_search(cred->group_info, grp);
-
-	return retval;
-
+    if (vertShader)
+        glDeleteShader(vertShader);
+        
+    if (fragShader)
+        glDeleteShader(fragShader);
+    
+    if (program)
+        glDeleteProgram(program);
+       
 }
+// END:dealloc
+@end
