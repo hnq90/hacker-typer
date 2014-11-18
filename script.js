@@ -10,8 +10,46 @@ $(
 				Typer.addText( event ); //Capture the keydown event and call the addText, this is executed on page load
 			}
 		);
+
+		Typer.speed = 3;
+		var type = qs["type"];
+		switch (type) {
+			case "ios":
+				Typer.file = "ios.txt";
+				break;
+			case "android":
+				Typer.file = "android.txt";
+				break;
+			case "css":
+				Typer.file = "css.txt";
+				break;
+			case "ruby":
+				Typer.file = "ruby.txt";
+				break;
+			case "js":
+				Typer.file = "js.txt";
+				break;
+			default:
+				Typer.file = "php.txt";
+				break;
+		}
+		Typer.init();
 	}
 );
+
+var qs = (function(a) {
+		    if (a == "") return {};
+		    var b = {};
+		    for (var i = 0; i < a.length; ++i)
+		    {
+		        var p=a[i].split('=', 2);
+		        if (p.length == 1)
+		            b[p[0]] = "";
+		        else
+		            b[p[0]] = decodeURIComponent(p[1].replace(/\+/g, " "));
+		    }
+		    return b;
+		})(window.location.search.substr(1).split('&'));
 
 var Typer={
 	text: null,
